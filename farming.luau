@@ -1,4 +1,5 @@
 --[[
+    Silence - Ml Farming
     by Henne @xyzhenrik_
        Muki @mukimagdich
 ]]
@@ -84,6 +85,224 @@ function formatNumber(num)
     return string.format("%.0f", num)
 end
 
+function formatPace(ratePerSecond)
+    return formatNumber(ratePerSecond) .. "/s | "
+        .. formatNumber(ratePerSecond * 60) .. "/min | "
+        .. formatNumber(ratePerSecond * 3600) .. "/h | "
+        .. formatNumber(ratePerSecond * 86400) .. "/d"
+end
+
+-- Right here comes my beautiful pet dictionary and its equip funcs
+
+local PETS = {
+    ["Omega Overlord"] = {
+        repSpeed = 20,
+        strength = 0,
+        durability = 0,
+        rebirth = 0,
+    },
+
+    ["Swift Samurai"] = {
+        repSpeed = 15,
+        strength = 0,
+        durability = 0,
+        rebirth = 0,
+    },
+
+    ["Powercore Hound"] = {
+        repSpeed = 0,
+        strength = 25,
+        durability = 15,
+        rebirth = 0,
+    },
+
+    ["Titanium Hydra"] = {
+        repSpeed = 0,
+        strength = 0,
+        durability = 0,
+        rebirth = 2,
+    },
+
+    ["Tribal Overlord"] = {
+        repSpeed = 0,
+        strength = 0,
+        durability = 0,
+        rebirth = 2,
+    },
+	["Inferno Unicorn"] = {
+		repSpeed = 0,
+		strength = 25,
+		durability = 25,
+		rebirth = 0,
+	},
+	["Common Boss Pet"] = {
+		repSpeed = 5,
+		strength = 0,
+		durability = 0,
+		rebirth = 0,
+	},
+	["Rare Boss Pet"] = {
+		repSpeed = 10,
+		strength = 0,
+		durability = 0,
+		rebirth = 0,
+	},
+	["Epic Boss Pet"] = {
+		repSpeed = 0,
+		strength = 5,
+		durability = 0,
+		rebirth = 0,
+	},
+	["Rainbow Boss Pet"] = {
+		repSpeed = 0,
+		strength = 7,
+		durability = 0,
+		rebirth = 0,
+	},
+	["Legendary Boss Pet"] = {
+		repSpeed = 0,
+		strength = 10,
+		durability = 0,
+		rebirth = 0,
+	},
+	["Mythic Boss Pet"] = {
+		repSpeed = 0,
+		strength = 20,
+		durability = 0,
+		rebirth = 0,
+	},
+    ["Inferno Drake"] = {
+        repSpeed = 40,
+        strength = 0,
+        durability = 0,
+        rebirth = 0,
+    },
+}
+
+local MAX_PET_SLOTS = 12
+local TARGET_REP_SPEED = 100
+
+local function unequipConfiguredPets()
+    for _, folder in ipairs(lp.player.petsFolder:GetChildren()) do
+        if folder:IsA("Folder") then
+            for _, pet in ipairs(folder:GetChildren()) do
+                services.replicatedstorage.rEvents.equipPetEvent:FireServer("unequipPet", pet)
+            end
+        end
+    end
+    task.wait(0.1)
+end
+
+local function equipConfiguredPet(pet)
+    services.replicatedstorage.rEvents.equipPetEvent:FireServer("equipPet", pet)
+end
+
+local function getOwnedConfiguredPets()
+    local ownedPets = {}
+
+    for _, folder in ipairs(lp.player.petsFolder:GetChildren()) do
+        if folder:IsA("Folder") then
+            for _, pet in ipairs(folder:GetChildren()) do
+                local config = PETS[pet.Name]
+                if config then
+                    table.insert(ownedPets, {
+                        instance = pet,
+                        name = pet.Name,
+                        repSpeed = config.repSpeed or 0,
+                        strength = config.strength or 0,
+                        durability = config.durability or 0,
+                        rebirth = config.rebirth or 0,
+                    })
+                end
+            end
+        end
+    end
+
+    return ownedPets
+end
+
+local function equipBestFarmingPets()
+    unequipConfiguredPets()
+
+    local pets = getOwnedConfiguredPets()
+    local equipped = {}
+    local equippedCount = 0
+    local currentRepSpeed = 0
+
+    table.sort(pets, function(a, b)
+        return a.repSpeed > b.repSpeed
+    end)
+
+    for _, pet in ipairs(pets) do
+        if equippedCount >= MAX_PET_SLOTS or currentRepSpeed >= TARGET_REP_SPEED then
+            break
+        end
+
+        if pet.repSpeed > 0 then
+            equipConfiguredPet(pet.instance)
+            equipped[pet.instance] = true
+            equippedCount = equippedCount + 1
+            currentRepSpeed = currentRepSpeed + pet.repSpeed
+        end
+    end
+
+    local remainingPets = {}
+
+    for _, pet in ipairs(pets) do
+        if not equipped[pet.instance] then
+            table.insert(remainingPets, pet)
+        end
+    end
+
+    table.sort(remainingPets, function(a, b)
+        local scoreA = a.strength + a.durability
+        local scoreB = b.strength + b.durability
+        return scoreA > scoreB
+    end)
+
+    for _, pet in ipairs(remainingPets) do
+        if equippedCount >= MAX_PET_SLOTS then
+            break
+        end
+
+        if pet.strength > 0 or pet.durability > 0 then
+            equipConfiguredPet(pet.instance)
+            equipped[pet.instance] = true
+            equippedCount = equippedCount + 1
+        end
+    end
+
+    return currentRepSpeed, equippedCount
+end
+
+local function equipBestRebirthPets()
+    unequipConfiguredPets()
+
+    local pets = getOwnedConfiguredPets()
+
+    table.sort(pets, function(a, b)
+        return a.rebirth > b.rebirth
+    end)
+
+    local equippedCount = 0
+    local totalRebirthMultiplier = 0
+
+    for _, pet in ipairs(pets) do
+        if equippedCount >= MAX_PET_SLOTS then
+            break
+        end
+
+        if pet.rebirth > 0 then
+            equipConfiguredPet(pet.instance)
+            equippedCount = equippedCount + 1
+            totalRebirthMultiplier = totalRebirthMultiplier + pet.rebirth
+        end
+    end
+
+    return totalRebirthMultiplier, equippedCount
+end
+
+
 -- Rebirth Tab
 
 tabs.rebirths.leaderstats = lp.player:WaitForChild("leaderstats")
@@ -113,7 +332,7 @@ tabs.rebirths.petIndex = 1
 tabs.rebirths.repIndex = 1
 tabs.rebirths.equippedCount = 0
 tabs.rebirths.currentPercent = 0
-tabs.rebirths.maxSlots = 9
+tabs.rebirths.maxSlots = 12
 tabs.rebirths.strengthTarget = 0
 tabs.rebirths.repsPerBurst = 12
 tabs.rebirths.rebirthValueBefore = tabs.rebirths.rebirths.Value
@@ -192,143 +411,17 @@ tabs.rebirths.updatePace = function()
     tabs.rebirths.lastRebirthValue = tabs.rebirths.rebirths.Value
 end
 
+
 tabs.rebirths.unequipAllPets = function()
-    tabs.rebirths.petFolders = lp.player.petsFolder:GetChildren()
-    tabs.rebirths.folderIndex = 1
-    while tabs.rebirths.folderIndex <= #tabs.rebirths.petFolders do
-        tabs.rebirths.petFolder = tabs.rebirths.petFolders[tabs.rebirths.folderIndex]
-        if tabs.rebirths.petFolder:IsA("Folder") then
-            tabs.rebirths.pets = tabs.rebirths.petFolder:GetChildren()
-            tabs.rebirths.petIndex = 1
-            while tabs.rebirths.petIndex <= #tabs.rebirths.pets do
-                tabs.rebirths.pet = tabs.rebirths.pets[tabs.rebirths.petIndex]
-                services.replicatedstorage.rEvents.equipPetEvent:FireServer("unequipPet", tabs.rebirths.pet)
-                tabs.rebirths.petIndex = tabs.rebirths.petIndex + 1
-            end
-        end
-        tabs.rebirths.folderIndex = tabs.rebirths.folderIndex + 1
-    end
-    task.wait(0.1)
+    unequipConfiguredPets()
 end
 
 tabs.rebirths.equipFarmingPets = function()
-    tabs.rebirths.unequipAllPets()
-
-    tabs.rebirths.omegas = {}
-    tabs.rebirths.swifts = {}
-    tabs.rebirths.hounds = {}
-    tabs.rebirths.uniquePets = lp.player.petsFolder.Unique:GetChildren()
-    tabs.rebirths.petIndex = 1
-
-    while tabs.rebirths.petIndex <= #tabs.rebirths.uniquePets do
-        tabs.rebirths.pet = tabs.rebirths.uniquePets[tabs.rebirths.petIndex]
-        if tabs.rebirths.pet.Name == "Omega Overlord" then
-            table.insert(tabs.rebirths.omegas, tabs.rebirths.pet)
-        elseif tabs.rebirths.pet.Name == "Swift Samurai" then
-            table.insert(tabs.rebirths.swifts, tabs.rebirths.pet)
-        elseif tabs.rebirths.pet.Name == "Powercore Hound" then
-            table.insert(tabs.rebirths.hounds, tabs.rebirths.pet)
-        end
-        tabs.rebirths.petIndex = tabs.rebirths.petIndex + 1
-    end
-
-    tabs.rebirths.equippedCount = 0
-    tabs.rebirths.currentPercent = 0
-
-    tabs.rebirths.petIndex = #tabs.rebirths.omegas
-    while tabs.rebirths.petIndex >= 1 do
-        if tabs.rebirths.equippedCount < tabs.rebirths.maxSlots and tabs.rebirths.currentPercent < 100 then
-            tabs.rebirths.pet = table.remove(tabs.rebirths.omegas, tabs.rebirths.petIndex)
-            services.replicatedstorage.rEvents.equipPetEvent:FireServer("equipPet", tabs.rebirths.pet)
-            tabs.rebirths.currentPercent = tabs.rebirths.currentPercent + 20
-            tabs.rebirths.equippedCount = tabs.rebirths.equippedCount + 1
-        end
-        tabs.rebirths.petIndex = tabs.rebirths.petIndex - 1
-    end
-
-    tabs.rebirths.petIndex = #tabs.rebirths.swifts
-    while tabs.rebirths.petIndex >= 1 do
-        if tabs.rebirths.equippedCount < tabs.rebirths.maxSlots and tabs.rebirths.currentPercent < 100 then
-            tabs.rebirths.pet = table.remove(tabs.rebirths.swifts, tabs.rebirths.petIndex)
-            services.replicatedstorage.rEvents.equipPetEvent:FireServer("equipPet", tabs.rebirths.pet)
-            tabs.rebirths.currentPercent = tabs.rebirths.currentPercent + 15
-            tabs.rebirths.equippedCount = tabs.rebirths.equippedCount + 1
-        end
-        tabs.rebirths.petIndex = tabs.rebirths.petIndex - 1
-    end
-
-    if tabs.rebirths.currentPercent >= 100 then
-        tabs.rebirths.petIndex = #tabs.rebirths.hounds
-        while tabs.rebirths.petIndex >= 1 do
-            if tabs.rebirths.equippedCount < tabs.rebirths.maxSlots then
-                tabs.rebirths.pet = table.remove(tabs.rebirths.hounds, tabs.rebirths.petIndex)
-                services.replicatedstorage.rEvents.equipPetEvent:FireServer("equipPet", tabs.rebirths.pet)
-                tabs.rebirths.equippedCount = tabs.rebirths.equippedCount + 1
-            end
-            tabs.rebirths.petIndex = tabs.rebirths.petIndex - 1
-        end
-    end
-
-    tabs.rebirths.petIndex = #tabs.rebirths.omegas
-    while tabs.rebirths.petIndex >= 1 do
-        if tabs.rebirths.equippedCount < tabs.rebirths.maxSlots then
-            tabs.rebirths.pet = table.remove(tabs.rebirths.omegas, tabs.rebirths.petIndex)
-            services.replicatedstorage.rEvents.equipPetEvent:FireServer("equipPet", tabs.rebirths.pet)
-            tabs.rebirths.equippedCount = tabs.rebirths.equippedCount + 1
-        end
-        tabs.rebirths.petIndex = tabs.rebirths.petIndex - 1
-    end
-
-    tabs.rebirths.petIndex = #tabs.rebirths.swifts
-    while tabs.rebirths.petIndex >= 1 do
-        if tabs.rebirths.equippedCount < tabs.rebirths.maxSlots then
-            tabs.rebirths.pet = table.remove(tabs.rebirths.swifts, tabs.rebirths.petIndex)
-            services.replicatedstorage.rEvents.equipPetEvent:FireServer("equipPet", tabs.rebirths.pet)
-            tabs.rebirths.equippedCount = tabs.rebirths.equippedCount + 1
-        end
-        tabs.rebirths.petIndex = tabs.rebirths.petIndex - 1
-    end
+    equipBestFarmingPets()
 end
 
 tabs.rebirths.equipRebirthPets = function()
-    tabs.rebirths.unequipAllPets()
-
-    tabs.rebirths.hydras = {}
-    tabs.rebirths.tribals = {}
-    tabs.rebirths.uniquePets = lp.player.petsFolder.Unique:GetChildren()
-    tabs.rebirths.petIndex = 1
-
-    while tabs.rebirths.petIndex <= #tabs.rebirths.uniquePets do
-        tabs.rebirths.pet = tabs.rebirths.uniquePets[tabs.rebirths.petIndex]
-        if tabs.rebirths.pet.Name == "Titanium Hydra" then
-            table.insert(tabs.rebirths.hydras, tabs.rebirths.pet)
-        elseif tabs.rebirths.pet.Name == "Tribal Overlord" then
-            table.insert(tabs.rebirths.tribals, tabs.rebirths.pet)
-        end
-        tabs.rebirths.petIndex = tabs.rebirths.petIndex + 1
-    end
-
-    tabs.rebirths.equippedCount = 0
-
-    tabs.rebirths.petIndex = 1
-    while tabs.rebirths.petIndex <= #tabs.rebirths.hydras do
-        if tabs.rebirths.equippedCount < tabs.rebirths.maxSlots then
-            tabs.rebirths.pet = tabs.rebirths.hydras[tabs.rebirths.petIndex]
-            services.replicatedstorage.rEvents.equipPetEvent:FireServer("equipPet", tabs.rebirths.pet)
-            tabs.rebirths.equippedCount = tabs.rebirths.equippedCount + 1
-        end
-        tabs.rebirths.petIndex = tabs.rebirths.petIndex + 1
-    end
-
-    tabs.rebirths.petIndex = 1
-    while tabs.rebirths.petIndex <= #tabs.rebirths.tribals do
-        if tabs.rebirths.equippedCount < tabs.rebirths.maxSlots then
-            tabs.rebirths.pet = tabs.rebirths.tribals[tabs.rebirths.petIndex]
-            services.replicatedstorage.rEvents.equipPetEvent:FireServer("equipPet", tabs.rebirths.pet)
-            tabs.rebirths.equippedCount = tabs.rebirths.equippedCount + 1
-        end
-        tabs.rebirths.petIndex = tabs.rebirths.petIndex + 1
-    end
+    equipBestRebirthPets()
 end
 
 tabs.rebirths.performRebirth = function()
@@ -436,7 +529,7 @@ tabs.strength.lastCalculationAt = tick()
 tabs.strength.lastCalculatedStrength = tabs.strength.strength.Value
 tabs.strength.lastCalculatedDurability = tabs.strength.durability.Value
 tabs.strength.initialSendRate = 200
-tabs.strength.maxSendRate = 1200
+tabs.strength.maxSendRate = 659
 tabs.strength.sendRate = tabs.strength.initialSendRate
 tabs.strength.sendTokens = 0
 tabs.strength.maxBurst = 24
@@ -452,10 +545,10 @@ tabs.strength.Status = tabs.strength:AddLabel("Status: Inactive")
 tabs.strength.Runtime = tabs.strength:AddLabel("Runtime: 0d 0h 0m 0s")
 tabs.strength.StrengthStats = tabs.strength:AddLabel("Strength: " .. formatNumber(tabs.strength.strength.Value) .. " | Gained: 0")
 tabs.strength.DurabilityStats = tabs.strength:AddLabel("Durability: " .. formatNumber(tabs.strength.durability.Value) .. " | Gained: 0")
-tabs.strength.StrengthPace = tabs.strength:AddLabel("Strength Pace: -- / Hour | -- / Day")
-tabs.strength.DurabilityPace = tabs.strength:AddLabel("Durability Pace: -- / Hour | -- / Day")
-tabs.strength.StrengthAverage = tabs.strength:AddLabel("Strength Average: -- / Hour | -- / Day")
-tabs.strength.DurabilityAverage = tabs.strength:AddLabel("Durability Average: -- / Hour | -- / Day")
+tabs.strength.StrengthPace = tabs.strength:AddLabel("Str Pace: --/s | --/min | --/h | --/d")
+tabs.strength.DurabilityPace = tabs.strength:AddLabel("Dura Pace: --/s | --/min | --/h | --/d")
+tabs.strength.StrengthAverage = tabs.strength:AddLabel("Str Ø: --/s | --/min | --/h | --/d")
+tabs.strength.DurabilityAverage = tabs.strength:AddLabel("Dura Ø: --/s | --/min | --/h | --/d")
 tabs.strength.Status.TextColor3 = Color3.fromRGB(255, 80, 80)
 
 tabs.strength.updateRuntime = function()
@@ -515,27 +608,23 @@ tabs.strength.calculatePace = function()
     tabs.strength.calculationElapsed = tick() - tabs.strength.lastCalculationAt
     tabs.strength.strengthDelta = tabs.strength.strength.Value - tabs.strength.lastCalculatedStrength
     tabs.strength.durabilityDelta = tabs.strength.durability.Value - tabs.strength.lastCalculatedDurability
-    tabs.strength.strengthHourlyPace = tabs.strength.strengthDelta / tabs.strength.calculationElapsed * 3600
-    tabs.strength.durabilityHourlyPace = tabs.strength.durabilityDelta / tabs.strength.calculationElapsed * 3600
+    tabs.strength.strengthPacePerSecond = tabs.strength.strengthDelta / tabs.strength.calculationElapsed
+    tabs.strength.durabilityPacePerSecond = tabs.strength.durabilityDelta / tabs.strength.calculationElapsed
 
     if tabs.strength.strengthDelta > 0 then
-        tabs.strength.StrengthPace.Text = "Strength Pace: " .. formatNumber(tabs.strength.strengthHourlyPace)
-            .. " / Hour | " .. formatNumber(tabs.strength.strengthHourlyPace * 24) .. " / Day"
+        tabs.strength.StrengthPace.Text = "Str Pace: " .. formatPace(tabs.strength.strengthPacePerSecond)
     end
     if tabs.strength.durabilityDelta > 0 then
-        tabs.strength.DurabilityPace.Text = "Durability Pace: " .. formatNumber(tabs.strength.durabilityHourlyPace)
-            .. " / Hour | " .. formatNumber(tabs.strength.durabilityHourlyPace * 24) .. " / Day"
+        tabs.strength.DurabilityPace.Text = "Dura Pace: " .. formatPace(tabs.strength.durabilityPacePerSecond)
     end
 
     tabs.strength.averageElapsed = tabs.strength.totalElapsed + tick() - tabs.strength.startedAt
-    tabs.strength.averageStrengthHourly = (tabs.strength.strength.Value - tabs.strength.startStrength)
-        / tabs.strength.averageElapsed * 3600
-    tabs.strength.averageDurabilityHourly = (tabs.strength.durability.Value - tabs.strength.startDurability)
-        / tabs.strength.averageElapsed * 3600
-    tabs.strength.StrengthAverage.Text = "Strength Average: " .. formatNumber(tabs.strength.averageStrengthHourly)
-        .. " / Hour | " .. formatNumber(tabs.strength.averageStrengthHourly * 24) .. " / Day"
-    tabs.strength.DurabilityAverage.Text = "Durability Average: " .. formatNumber(tabs.strength.averageDurabilityHourly)
-        .. " / Hour | " .. formatNumber(tabs.strength.averageDurabilityHourly * 24) .. " / Day"
+    tabs.strength.averageStrengthPerSecond = (tabs.strength.strength.Value - tabs.strength.startStrength)
+        / tabs.strength.averageElapsed
+    tabs.strength.averageDurabilityPerSecond = (tabs.strength.durability.Value - tabs.strength.startDurability)
+        / tabs.strength.averageElapsed
+    tabs.strength.StrengthAverage.Text = "Str Ø: " .. formatPace(tabs.strength.averageStrengthPerSecond)
+    tabs.strength.DurabilityAverage.Text = "Dura Ø: " .. formatPace(tabs.strength.averageDurabilityPerSecond)
 
     tabs.strength.lastCalculationAt = tick()
     tabs.strength.lastCalculatedStrength = tabs.strength.strength.Value
@@ -631,6 +720,20 @@ tabs.strength.durability:GetPropertyChangedSignal("Value"):Connect(function()
     tabs.strength.updatePace()
 end)
 
+tabs.strength:AddTextBox("Max reps/s: " .. tabs.strength.maxSendRate, function(inputText)
+    tabs.strength.maxSendRate = tonumber(inputText)
+
+    if tabs.strengthmaxSendRate then
+        tabs.strength.maxSendRate = math.max(1, tabs.strength.maxSendRate)
+        tabs.strength.sendRate = math.min(
+            tabs.strength.sendRate,
+            tabs.strength.maxSendRate
+        )
+    end
+end, {clear = false})
+
+tabs.strength:AddLabel("Recommended Speed: 659, more = lag")
+
 tabs.strength.FastRepToggle = tabs.strength:AddSwitch("Fast Rep", function(state)
     tabs.strength.running = state
     if state then
@@ -706,10 +809,10 @@ tabs.strength2.Status = tabs.strength2:AddLabel("Status: Inactive")
 tabs.strength2.Runtime = tabs.strength2:AddLabel("Runtime: 0d 0h 0m 0s")
 tabs.strength2.StrengthStats = tabs.strength2:AddLabel("Strength: " .. formatNumber(tabs.strength2.strength.Value) .. " | Gained: 0")
 tabs.strength2.DurabilityStats = tabs.strength2:AddLabel("Durability: " .. formatNumber(tabs.strength2.durability.Value) .. " | Gained: 0")
-tabs.strength2.StrengthPace = tabs.strength2:AddLabel("Strength Pace: -- / Hour | -- / Day")
-tabs.strength2.DurabilityPace = tabs.strength2:AddLabel("Durability Pace: -- / Hour | -- / Day")
-tabs.strength2.StrengthAverage = tabs.strength2:AddLabel("Strength Average: -- / Hour | -- / Day")
-tabs.strength2.DurabilityAverage = tabs.strength2:AddLabel("Durability Average: -- / Hour | -- / Day")
+tabs.strength2.StrengthPace = tabs.strength2:AddLabel("Str Pace: --/s | --/min | --/h | --/d")
+tabs.strength2.DurabilityPace = tabs.strength2:AddLabel("Dura Pace: --/s | --/min | --/h | --/d")
+tabs.strength2.StrengthAverage = tabs.strength2:AddLabel("Str Ø: --/s | --/min | --/h | --/d")
+tabs.strength2.DurabilityAverage = tabs.strength2:AddLabel("Dura Ø: --/s | --/min | --/h | --/d")
 tabs.strength2.Status.TextColor3 = Color3.fromRGB(255, 80, 80)
 
 tabs.strength2.updateRuntime = function()
@@ -762,28 +865,24 @@ tabs.strength2.calculatePace = function()
 
     tabs.strength2.strengthDelta = tabs.strength2.strength.Value - tabs.strength2.lastCalculatedStrength
     tabs.strength2.durabilityDelta = tabs.strength2.durability.Value - tabs.strength2.lastCalculatedDurability
-    tabs.strength2.strengthHourlyPace = tabs.strength2.strengthDelta / tabs.strength2.calculationElapsed * 3600
-    tabs.strength2.durabilityHourlyPace = tabs.strength2.durabilityDelta / tabs.strength2.calculationElapsed * 3600
+    tabs.strength2.strengthPacePerSecond = tabs.strength2.strengthDelta / tabs.strength2.calculationElapsed
+    tabs.strength2.durabilityPacePerSecond = tabs.strength2.durabilityDelta / tabs.strength2.calculationElapsed
 
     if tabs.strength2.strengthDelta > 0 then
-        tabs.strength2.StrengthPace.Text = "Strength Pace: " .. formatNumber(tabs.strength2.strengthHourlyPace)
-            .. " / Hour | " .. formatNumber(tabs.strength2.strengthHourlyPace * 24) .. " / Day"
+        tabs.strength2.StrengthPace.Text = "Str Pace: " .. formatPace(tabs.strength2.strengthPacePerSecond)
     end
     if tabs.strength2.durabilityDelta > 0 then
-        tabs.strength2.DurabilityPace.Text = "Durability Pace: " .. formatNumber(tabs.strength2.durabilityHourlyPace)
-            .. " / Hour | " .. formatNumber(tabs.strength2.durabilityHourlyPace * 24) .. " / Day"
+        tabs.strength2.DurabilityPace.Text = "Dura Pace: " .. formatPace(tabs.strength2.durabilityPacePerSecond)
     end
 
     tabs.strength2.averageElapsed = tabs.strength2.totalElapsed + tick() - tabs.strength2.startedAt
     if tabs.strength2.averageElapsed > 0 then
-        tabs.strength2.averageStrengthHourly = (tabs.strength2.strength.Value - tabs.strength2.startStrength)
-            / tabs.strength2.averageElapsed * 3600
-        tabs.strength2.averageDurabilityHourly = (tabs.strength2.durability.Value - tabs.strength2.startDurability)
-            / tabs.strength2.averageElapsed * 3600
-        tabs.strength2.StrengthAverage.Text = "Strength Average: " .. formatNumber(tabs.strength2.averageStrengthHourly)
-            .. " / Hour | " .. formatNumber(tabs.strength2.averageStrengthHourly * 24) .. " / Day"
-        tabs.strength2.DurabilityAverage.Text = "Durability Average: " .. formatNumber(tabs.strength2.averageDurabilityHourly)
-            .. " / Hour | " .. formatNumber(tabs.strength2.averageDurabilityHourly * 24) .. " / Day"
+        tabs.strength2.averageStrengthPerSecond = (tabs.strength2.strength.Value - tabs.strength2.startStrength)
+            / tabs.strength2.averageElapsed
+        tabs.strength2.averageDurabilityPerSecond = (tabs.strength2.durability.Value - tabs.strength2.startDurability)
+            / tabs.strength2.averageElapsed
+        tabs.strength2.StrengthAverage.Text = "Str Ø: " .. formatPace(tabs.strength2.averageStrengthPerSecond)
+        tabs.strength2.DurabilityAverage.Text = "Dura Ø: " .. formatPace(tabs.strength2.averageDurabilityPerSecond)
     end
 
     tabs.strength2.lastCalculationAt = tick()
@@ -992,7 +1091,9 @@ function eatEgg()
     tabs.other.backpack = lp.player:FindFirstChild("Backpack")
     tabs.other.tool = (tabs.other.character and tabs.other.character:FindFirstChild("Protein Egg")) or (tabs.other.backpack and tabs.other.backpack:FindFirstChild("Protein Egg"))
     if tabs.other.tool then
-        services.muscleEvent:FireServer("proteinEgg", tabs.other.tool)
+        for _ = 1, 10 do
+            services.muscleEvent:FireServer("proteinEgg", tabs.other.tool)
+        end
     end
 end
 
@@ -1158,6 +1259,14 @@ tabs.other:AddButton("Industrial Squat",function()
     tabs.other.tpE(Vector3.new(-5217.25049, 89.8445511, 5416.01025))
 end)
 
+tabs.other:AddButton("Overcharged Lift",function()
+    tabs.other.tpE(Vector3.new(-3023.363, 151.797, 4696.859))
+end)
+
+tabs.other:AddButton("Overcharged Squat",function()
+    tabs.other.tpE(Vector3.new(-2673.216, 151.797, 5494.047))
+end)
+
 
 tabs.other:AddButton("Anti Lag (for bad devices)", function()
     tabs.other.playerGui = lp.player:WaitForChild("PlayerGui")
@@ -1256,84 +1365,13 @@ end
 end)
 
 tabs.other:AddButton("Equip Rep Pets", function()
-    for _, folder in pairs(lp.player.petsFolder:GetChildren()) do
-        if folder:IsA("Folder") then
-            for _, pet in pairs(folder:GetChildren()) do
-                services.replicatedstorage.rEvents.equipPetEvent:FireServer("unequipPet", pet)
-            end
-        end
-    end
-    task.wait(0.2)
-
-    tabs.other.omegas = {}
-    tabs.other.swifts = {}
-    tabs.other.hounds = {}
-
-    for _, pet in pairs(lp.player.petsFolder.Unique:GetChildren()) do
-        if pet.Name == "Omega Overlord" then table.insert(tabs.other.omegas, pet)
-        elseif pet.Name == "Swift Samurai" then table.insert(tabs.other.swifts, pet)
-        elseif pet.Name == "Powercore Hound" then table.insert(tabs.other.hounds, pet)
-        end
-    end
-
-    tabs.other.equippedCount = 0
-    tabs.other.currentPercent = 0
-    tabs.other.maxSlots = 9
-
-    for i = #tabs.other.omegas, 1, -1 do
-        if tabs.other.equippedCount < tabs.other.maxSlots and tabs.other.currentPercent < 100 then
-            tabs.other.pet = table.remove(tabs.other.omegas, i)
-            services.replicatedstorage.rEvents.equipPetEvent:FireServer("equipPet", tabs.other.pet)
-            tabs.other.currentPercent = tabs.other.currentPercent + 20
-            tabs.other.equippedCount = tabs.other.equippedCount + 1
-            task.wait(0.1)
-        end
-    end
-
-    for i = #tabs.other.swifts, 1, -1 do
-        if tabs.other.equippedCount < tabs.other.maxSlots and tabs.other.currentPercent < 100 then
-            tabs.other.pet = table.remove(tabs.other.swifts, i)
-            services.replicatedstorage.rEvents.equipPetEvent:FireServer("equipPet", tabs.other.pet)
-            tabs.other.currentPercent = tabs.other.currentPercent + 15
-            tabs.other.equippedCount = tabs.other.equippedCount + 1
-            task.wait(0.1)
-        end
-    end
-
-    if tabs.other.currentPercent >= 100 then
-        for i = #tabs.other.hounds, 1, -1 do
-            if tabs.other.equippedCount < tabs.other.maxSlots then
-                tabs.other.pet = table.remove(tabs.other.hounds, i)
-                services.replicatedstorage.rEvents.equipPetEvent:FireServer("equipPet", tabs.other.pet)
-                tabs.other.equippedCount = tabs.other.equippedCount + 1
-                task.wait(0.1)
-            end
-        end
-    end
-
-    for i = #tabs.other.omegas, 1, -1 do
-        if tabs.other.equippedCount < tabs.other.maxSlots then
-            tabs.other.pet = table.remove(tabs.other.omegas, i)
-            services.replicatedstorage.rEvents.equipPetEvent:FireServer("equipPet", tabs.other.pet)
-            tabs.other.equippedCount = tabs.other.equippedCount + 1
-            task.wait(0.1)
-        end
-    end
-
-    for i = #tabs.other.swifts, 1, -1 do
-        if tabs.other.equippedCount < tabs.other.maxSlots then
-            tabs.other.pet = table.remove(tabs.other.swifts, i)
-            services.replicatedstorage.rEvents.equipPetEvent:FireServer("equipPet", tabs.other.pet)
-            tabs.other.equippedCount = tabs.other.equippedCount + 1
-            task.wait(0.1)
-        end
-    end
+    equipBestFarmingPets()
 end)
 
 tabs.info:Show()
 tabs.info:AddLabel("Made with ♥️ by Henne and Muki").TextSize = 17
 tabs.info:AddLabel("Any issue? Ping @xyzhenrik_ or @mukimagdich on Discord").TextSize = 17
 tabs.info:AddLabel("")
-tabs.info.wLabel = tabs.info:AddLabel("Farming [V4.1.1]")
+tabs.info.wLabel = tabs.info:AddLabel("Farming [V4.1.2]")
 tabs.info.wLabel.TextSize = 20
 tabs.info.wLabel.Font = Enum.Font.Arcade
