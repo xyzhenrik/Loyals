@@ -1,9 +1,88 @@
---[[
-    Modified Elerium V2
-	EleriumV2 was made by github.com/memejames
-	Project url: https://github.com/memejames/elerium-v2-ui-library
-	modified by Henne @xyzhenrik_
-]]
+local nativeTask = task
+local runtime = {Alive = true, Threads = {}, Connections = {}, Cleanups = {}}
+
+function runtime:Schedule(schedule, callback, ...)
+    if not self.Alive then return end
+    local arguments = table.pack(...)
+    local thread
+    thread = coroutine.create(function()
+        if not self.Alive then self.Threads[thread] = nil return end
+        local results = table.pack(pcall(callback, table.unpack(arguments, 1, arguments.n)))
+        self.Threads[thread] = nil
+        if not results[1] then error(results[2], 0) end
+        return table.unpack(results, 2, results.n)
+    end)
+    self.Threads[thread] = true
+    schedule(thread)
+    return thread
+end
+
+function runtime:Spawn(callback, ...)
+    return self:Schedule(nativeTask.spawn, callback, ...)
+end
+
+function runtime:Defer(callback, ...)
+    return self:Schedule(nativeTask.defer, callback, ...)
+end
+
+function runtime:Delay(seconds, callback, ...)
+    return self:Schedule(function(thread) nativeTask.delay(seconds, thread) end, callback, ...)
+end
+
+function runtime:Connect(signal, callback)
+    if not self.Alive then return end
+    local connection = signal:Connect(function(...)
+        self:Spawn(callback, ...)
+    end)
+    self.Connections[connection] = true
+    return connection
+end
+
+function runtime:AddCleanup(callback)
+    if self.Alive then
+        table.insert(self.Cleanups, callback)
+    else
+        pcall(callback)
+    end
+    return callback
+end
+
+function runtime:Destroy()
+    if not self.Alive then return end
+    self.Alive = false
+    for connection in pairs(self.Connections) do
+        pcall(function() connection:Disconnect() end)
+    end
+    table.clear(self.Connections)
+    local current = coroutine.running()
+    for thread in pairs(self.Threads) do
+        if thread ~= current and coroutine.status(thread) ~= "dead" then
+            pcall(nativeTask.cancel, thread)
+        end
+    end
+    table.clear(self.Threads)
+    for index = #self.Cleanups, 1, -1 do
+        pcall(self.Cleanups[index])
+    end
+    table.clear(self.Cleanups)
+    if _G.SilenceRuntime == self then _G.SilenceRuntime = nil end
+end
+
+if _G.SilenceRuntime then
+    _G.SilenceRuntime:Destroy()
+end
+_G.SilenceRuntime = runtime
+runtime.Threads[coroutine.running()] = true
+
+local isSolara = false
+do
+	local success, executorName = pcall(function()
+		local identify = identifyexecutor
+		if type(identify) ~= "function" then identify = getexecutorname end
+		if type(identify) == "function" then return identify() end
+	end)
+	isSolara = success and type(executorName) == "string" and string.lower(executorName) == "solara"
+end
 
 local ui_options = {
 	main_color = Color3.fromRGB(41, 74, 122),
@@ -22,28 +101,34 @@ do
 		end
 	end
 
-	destroyImguiIn(game:GetService("CoreGui"))
+	if not isSolara then
+		pcall(function() destroyImguiIn(game:GetService("CoreGui")) end)
+	end
 
 	local Players = game:GetService("Players")
 	if Players and Players.LocalPlayer then
 		destroyImguiIn(Players.LocalPlayer:FindFirstChild("PlayerGui"))
 	end
 
-	if type(gethui) == "function" then
+	if not isSolara and type(gethui) == "function" then
 		local ok, gh = pcall(gethui)
 		if ok and gh then
 			destroyImguiIn(gh)
 		end
 	end
 
-	for _,v in pairs(game:GetDescendants()) do
-		if v.Name == "imgui" and v:IsA("ScreenGui") then
-			pcall(function() v:Destroy() end)
+	if not isSolara then
+		for _,v in pairs(game:GetDescendants()) do
+			if v.Name == "imgui" and v:IsA("ScreenGui") then
+				pcall(function() v:Destroy() end)
+			end
 		end
 	end
 end
 
 local imgui = Instance.new("ScreenGui")
+runtime:AddCleanup(function() imgui:Destroy() end)
+runtime:Connect(imgui.Destroying, function() runtime:Destroy() end)
 local prefabs = Instance.new("Frame")
 local label = Instance.new("TextLabel")
 local window = Instance.new("ImageLabel")
@@ -115,12 +200,18 @@ local title4Label = Instance.new("TextLabel")
 local inputButton = Instance.new("TextButton")
 local inputRoundify4px = Instance.new("ImageLabel")
 local windowsFrame = Instance.new("Frame")
-local cloneref = cloneref and cloneref or function(...) return ... end
-local CoreGui= cloneref(game:GetService("CoreGui"))
-
+local cloneref = type(cloneref) == "function" and cloneref or function(...) return ... end
+local CoreGui
+if not isSolara then pcall(function() CoreGui = game:GetService("CoreGui") end) end
+if CoreGui then pcall(function() CoreGui = cloneref(CoreGui) end) end
 
 imgui.Name = "imgui"
-imgui.Parent = gethui and gethui() or (CoreGui or game.Players.LocalPlayer:WaitForChild("PlayerGui"))
+imgui.ResetOnSpawn = false
+if not isSolara and type(gethui) == "function" then
+	pcall(function() imgui.Parent = gethui() end)
+end
+if not imgui.Parent and CoreGui then pcall(function() imgui.Parent = CoreGui end) end
+if not imgui.Parent then imgui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
 prefabs.Name = "Prefabs"
 prefabs.Parent = imgui
 prefabs.BackgroundColor3 = Color3.new(1, 1, 1)
@@ -845,7 +936,6 @@ windowsFrame.BackgroundTransparency = 1
 windowsFrame.Position = UDim2.new(0, 20, 0, 20)
 windowsFrame.Size = UDim2.new(1, 20, 1, -20)
 
---[[ Script ]]--
 local root = imgui
 
 local UIS = game:GetService("UserInputService")
@@ -863,7 +953,7 @@ local checks = {
 	["binding"] = false,
 }
 
-UIS.InputBegan:Connect(function(input, gameProcessed)
+runtime:Connect(UIS.InputBegan, function(input, gameProcessed)
 	if input.KeyCode == ((typeof(ui_options.toggle_key) == "EnumItem") and ui_options.toggle_key or Enum.KeyCode.RightShift) then
 		if root then
 			if not checks.binding and root.Enabled ~= nil then
@@ -880,7 +970,7 @@ local function Resize(part, new, _delay)
 	tween:Play()
 end
 
-local function rgbtohsv(r, g, b) -- idk who made this function, but thanks
+local function rgbtohsv(r, g, b)
 	r, g, b = r / 255, g / 255, b / 255
 	local max, min = math.max(r, g, b), math.min(r, g, b)
 	local h, s, v
@@ -930,7 +1020,7 @@ local function gMouse()
 end
 
 local function ripple(button, x, y)
-	spawn(function()
+	runtime:Spawn(function()
 		button.ClipsDescendants = true
 
 		local circle = prefabs:FindFirstChild("Circle"):Clone()
@@ -960,7 +1050,146 @@ local function ripple(button, x, y)
 end
 
 local windows = 0
-local library = {}
+local library = {Runtime = runtime}
+
+function library:Destroy()
+    runtime:Destroy()
+end
+
+function library:EnableAntiAFK()
+	if _G.SilenceAntiAFKConnection then
+		_G.SilenceAntiAFKConnection:Disconnect()
+	end
+	local player = game:GetService("Players").LocalPlayer
+	local input = game:GetService("VirtualInputManager")
+	local held = false
+	_G.SilenceAntiAFKConnection = runtime:Connect(player.Idled, function()
+		local success = pcall(function()
+			input:SendKeyEvent(true, Enum.KeyCode.Y, false, game)
+			held = true
+			task.wait(0.05)
+			input:SendKeyEvent(false, Enum.KeyCode.Y, false, game)
+			held = false
+		end)
+		if not success then
+			pcall(function()
+				local virtualUser = game:GetService("VirtualUser")
+				virtualUser:CaptureController()
+				virtualUser:ClickButton2(Vector2.new())
+			end)
+		end
+	end)
+	local connection = _G.SilenceAntiAFKConnection
+	runtime:AddCleanup(function()
+		if held then
+			pcall(function() input:SendKeyEvent(false, Enum.KeyCode.Y, false, game) end)
+		end
+		if _G.SilenceAntiAFKConnection == connection then _G.SilenceAntiAFKConnection = nil end
+	end)
+	return _G.SilenceAntiAFKConnection
+end
+
+function library:CreatePrivacyRedactor(player, redactorKey)
+	local redactor = {
+		Enabled = false,
+		OriginalText = setmetatable({}, {__mode = "k"}),
+	}
+	local key = tostring(redactorKey or "Default")
+	_G.SilencePrivacyGenerations = _G.SilencePrivacyGenerations or {}
+	_G.SilencePrivacyGenerations[key] = (_G.SilencePrivacyGenerations[key] or 0) + 1
+	local generation = _G.SilencePrivacyGenerations[key]
+    runtime:AddCleanup(function() redactor:SetEnabled(false) end)
+
+	local function replacePlain(text, search, replacement)
+		local startPosition = string.find(text, search, 1, true)
+		while startPosition do
+			text = string.sub(text, 1, startPosition - 1) .. replacement
+				.. string.sub(text, startPosition + #search)
+			startPosition = string.find(text, search, startPosition + #replacement, true)
+		end
+		return text
+	end
+
+	local function setRedactedText(textObject, redactedText)
+		local saved = redactor.OriginalText[textObject]
+		if not saved or textObject.Text ~= saved.Redacted then
+			saved = {Original = textObject.Text}
+			redactor.OriginalText[textObject] = saved
+		end
+		saved.Redacted = redactedText
+		textObject.Text = redactedText
+	end
+
+	local function redactName(textObject)
+		local original = textObject.Text
+		local redacted = replacePlain(original, player.Name, "########")
+		if player.DisplayName ~= player.Name then
+			redacted = replacePlain(redacted, player.DisplayName, "########")
+		end
+		if redacted ~= original then
+			setRedactedText(textObject, redacted)
+			return true
+		end
+		return false
+	end
+
+	local function redactScoreboard()
+		local coreGui = game:GetService("CoreGui")
+		for _, object in ipairs(coreGui:GetDescendants()) do
+			local saved = redactor.OriginalText[object]
+			local wasName = saved and (string.find(saved.Original, player.Name, 1, true)
+				or string.find(saved.Original, player.DisplayName, 1, true))
+			if (object:IsA("TextLabel") or object:IsA("TextButton")) and (redactName(object) or wasName) then
+				local row = object.Parent
+				if row then
+					for _, valueObject in ipairs(row:GetDescendants()) do
+						if (valueObject:IsA("TextLabel") or valueObject:IsA("TextButton"))
+							and valueObject ~= object and string.find(valueObject.Text, "%d") then
+							setRedactedText(valueObject, "####")
+						end
+					end
+				end
+			end
+		end
+	end
+
+	local function redactNametag()
+		local character = player.Character
+		if not character then return end
+		for _, object in ipairs(character:GetDescendants()) do
+			if object:IsA("TextLabel") or object:IsA("TextButton") then
+				redactName(object)
+			end
+		end
+	end
+
+	function redactor:SetEnabled(enabled)
+		self.Enabled = enabled
+		if enabled then
+			pcall(redactNametag)
+			pcall(redactScoreboard)
+		else
+			for object, saved in pairs(self.OriginalText) do
+				if object and object.Parent then
+					object.Text = saved.Original
+				end
+			end
+			table.clear(self.OriginalText)
+		end
+	end
+
+	runtime:Spawn(function()
+		while _G.SilencePrivacyGenerations[key] == generation do
+			if redactor.Enabled then
+				pcall(redactNametag)
+				pcall(redactScoreboard)
+			end
+			task.wait(1)
+		end
+	end)
+
+	return redactor
+end
 
 local function format_windows()
 	local ull = prefabs:FindFirstChild("UIListLayout"):Clone()
@@ -985,6 +1214,7 @@ function library:FormatWindows()
 end
 
 function library:AddWindow(title, options)
+	if not runtime.Alive then return end
 	windows = windows + 1
 	local dropdown_open = false
 	title = tostring(title or "New Window")
@@ -997,7 +1227,7 @@ function library:AddWindow(title, options)
 	Window.Size = UDim2.new(0, options.min_size.X, 0, options.min_size.Y)
 	Window.ZIndex = Window.ZIndex + (windows * 10)
 
-	do -- Altering Window Color
+	do
 		local Title = Window:FindFirstChild("Title")
 		local Bar = Window:FindFirstChild("Bar")
 		local Base = Bar:FindFirstChild("Base")
@@ -1005,7 +1235,7 @@ function library:AddWindow(title, options)
 		local SplitFrame = Window:FindFirstChild("TabSelection"):FindFirstChild("Frame")
 		local Toggle = Bar:FindFirstChild("Toggle")
 
-		spawn(function()
+		runtime:Spawn(function()
 			while true do
 				Bar.BackgroundColor3 = options.main_color
 				Base.BackgroundColor3 = options.main_color
@@ -1022,21 +1252,29 @@ function library:AddWindow(title, options)
 	local Resizer = Window:WaitForChild("Resizer")
 
 	local window_data = {}
+	function window_data:Destroy()
+		library:Destroy()
+	end
 	Window.Draggable = true
 
-	do -- Resize Window
+	function window_data:SetTitle(new_title)
+		if not runtime.Alive then return end
+		Window:FindFirstChild("Title").Text = tostring(new_title or "New Window")
+	end
+
+	do
 		local oldIcon = mouse.Icon
 		local Entered = false
-		Resizer.MouseEnter:Connect(function()
+		runtime:Connect(Resizer.MouseEnter, function()
 			Window.Draggable = false
 			if options.can_resize then
 				oldIcon = mouse.Icon
-				-- mouse.Icon = "http://www.roblox.com/asset?id=4745131330"
+
 			end
 			Entered = true
 		end)
 
-		Resizer.MouseLeave:Connect(function()
+		runtime:Connect(Resizer.MouseLeave, function()
 			Entered = false
 			if options.can_resize then
 				mouse.Icon = oldIcon
@@ -1045,11 +1283,11 @@ function library:AddWindow(title, options)
 		end)
 
 		local Held = false
-		UIS.InputBegan:Connect(function(inputObject)
+		runtime:Connect(UIS.InputBegan, function(inputObject)
 			if inputObject.UserInputType == Enum.UserInputType.MouseButton1 then
 				Held = true
 
-				spawn(function() -- Loop check
+				runtime:Spawn(function()
 					if Entered and Resizer.Active and options.can_resize then
 						while Held and Resizer.Active do
 
@@ -1057,7 +1295,6 @@ function library:AddWindow(title, options)
 							local x = mouse_location.X - Window.AbsolutePosition.X
 							local y = mouse_location.Y - Window.AbsolutePosition.Y
 
-							--
 							if x >= options.min_size.X and y >= options.min_size.Y then
 								Resize(Window, {Size = UDim2.new(0, x, 0, y)}, options.tween_time)
 							elseif x >= options.min_size.X then
@@ -1074,26 +1311,25 @@ function library:AddWindow(title, options)
 				end)
 			end
 		end)
-		UIS.InputEnded:Connect(function(inputObject)
+		runtime:Connect(UIS.InputEnded, function(inputObject)
 			if inputObject.UserInputType == Enum.UserInputType.MouseButton1 then
 				Held = false
 			end
 		end)
 	end
 
-	do -- [Open / Close] Window
+	do
 		local open_close = Window:FindFirstChild("Bar"):FindFirstChild("Toggle")
 		local open = true
 		local canopen = true
 
 		local oldwindowdata = {}
 		local oldy = Window.AbsoluteSize.Y
-		open_close.MouseButton1Click:Connect(function()
+		runtime:Connect(open_close.MouseButton1Click, function()
 			if canopen then
 				canopen = false
 
 				if open then
-					-- Close
 
 					oldwindowdata = {}
 					for i,v in pairs(Window:FindFirstChild("Tabs"):GetChildren()) do
@@ -1108,7 +1344,6 @@ function library:AddWindow(title, options)
 					open_close.Parent:FindFirstChild("Base").Transparency = 1
 
 				else
-					-- Open
 
 					for i,v in pairs(oldwindowdata) do
 						i.Visible = v
@@ -1129,12 +1364,12 @@ function library:AddWindow(title, options)
 		end)
 	end
 
-	do -- UI Elements
+	do
 		local tabs = Window:FindFirstChild("Tabs")
 		local tab_selection = Window:FindFirstChild("TabSelection")
 		local tab_buttons = tab_selection:FindFirstChild("TabButtons")
 
-		do -- Add Tab
+		do
 			function window_data:AddTab(tab_name)
 				local tab_data = {}
 				tab_name = tostring(tab_name or "New Tab")
@@ -1168,7 +1403,7 @@ function library:AddWindow(title, options)
 					new_tab.Visible = true
 				end
 
-				new_button.MouseButton1Click:Connect(function()
+				runtime:Connect(new_button.MouseButton1Click, function()
 					show()
 				end)
 
@@ -1176,22 +1411,24 @@ function library:AddWindow(title, options)
 					show()
 				end
 
-				do -- Tab Elements
+				do
 
-					function tab_data:AddLabel(label_text) -- [Label]
+					function tab_data:AddLabel(label_text)
 						label_text = tostring(label_text or "New Label")
 
 						local label = prefabs:FindFirstChild("Label"):Clone()
 
 						label.Parent = new_tab
 						label.Text = label_text
-						label.Size = UDim2.new(0, gNameLen(label), 0, 20)
+						label.Size = UDim2.new(1, -10, 0, 20)
+						label.TextWrapped = true
+						label.AutomaticSize = Enum.AutomaticSize.Y
 						label.ZIndex = label.ZIndex + (windows * 10)
 
 						return label
 					end
 
-					function tab_data:AddButton(button_text, callback) -- [Button]
+					function tab_data:AddButton(button_text, callback)
 						button_text = tostring(button_text or "New Button")
 						callback = typeof(callback) == "function" and callback or function()end
 
@@ -1203,7 +1440,7 @@ function library:AddWindow(title, options)
 						button.ZIndex = button.ZIndex + (windows * 10)
 						button:GetChildren()[1].ZIndex = button:GetChildren()[1].ZIndex + (windows * 10)
 
-						spawn(function()
+						runtime:Spawn(function()
 							while true do
 								if button and button:GetChildren()[1] then
 									button:GetChildren()[1].ImageColor3 = options.main_color
@@ -1212,7 +1449,7 @@ function library:AddWindow(title, options)
 							end
 						end)
 
-						button.MouseButton1Click:Connect(function()
+						runtime:Connect(button.MouseButton1Click, function()
 							ripple(button, mouse.X, mouse.Y)
 							pcall(callback)
 						end)
@@ -1220,7 +1457,7 @@ function library:AddWindow(title, options)
 						return button
 					end
 
-					function tab_data:AddSwitch(switch_text, callback) -- [Switch]
+					function tab_data:AddSwitch(switch_text, callback)
 						local switch_data = {}
 
 						switch_text = tostring(switch_text or "New Switch")
@@ -1235,7 +1472,7 @@ function library:AddWindow(title, options)
 						switch.ZIndex = switch.ZIndex + (windows * 10)
 						switch:GetChildren()[1].ZIndex = switch:GetChildren()[1].ZIndex + (windows * 10)
 
-						spawn(function()
+						runtime:Spawn(function()
 							while true do
 								if switch and switch:GetChildren()[1] then
 									switch:GetChildren()[1].ImageColor3 = options.main_color
@@ -1245,13 +1482,20 @@ function library:AddWindow(title, options)
 						end)
 
 						local toggled = false
-						switch.MouseButton1Click:Connect(function()
+						runtime:AddCleanup(function()
+							if toggled then
+								toggled = false
+								pcall(callback, false)
+							end
+						end)
+						runtime:Connect(switch.MouseButton1Click, function()
 							toggled = not toggled
 							switch.Text = toggled and utf8.char(10003) or ""
 							pcall(callback, toggled)
 						end)
 
 						function switch_data:Set(bool)
+							if not runtime.Alive then return end
 							toggled = (typeof(bool) == "boolean") and bool or false
 							switch.Text = toggled and utf8.char(10003) or ""
 							pcall(callback,toggled)
@@ -1275,7 +1519,7 @@ function library:AddWindow(title, options)
 						textbox.ZIndex = textbox.ZIndex + (windows * 10)
 						textbox:GetChildren()[1].ZIndex = textbox:GetChildren()[1].ZIndex + (windows * 10)
 
-						textbox.FocusLost:Connect(function(ep)
+						runtime:Connect(textbox.FocusLost, function(ep)
 							if ep then
 								if #textbox.Text > 0 then
 									pcall(callback, textbox.Text)
@@ -1315,23 +1559,23 @@ function library:AddWindow(title, options)
 
 						title.Text = slider_text
 
-						do -- Slider Math
+						do
 							local Entered = false
-							slider.MouseEnter:Connect(function()
+							runtime:Connect(slider.MouseEnter, function()
 								Entered = true
 								Window.Draggable = false
 							end)
-							slider.MouseLeave:Connect(function()
+							runtime:Connect(slider.MouseLeave, function()
 								Entered = false
 								Window.Draggable = true
 							end)
 
 							local Held = false
-							UIS.InputBegan:Connect(function(inputObject)
+							runtime:Connect(UIS.InputBegan, function(inputObject)
 								if inputObject.UserInputType == Enum.UserInputType.MouseButton1 then
 									Held = true
 
-									spawn(function() -- Loop check
+									runtime:Spawn(function()
 										if Entered and not slider_options.readonly then
 											while Held and (not dropdown_open) do
 												local mouse_location = gMouse()
@@ -1367,7 +1611,7 @@ function library:AddWindow(title, options)
 									end)
 								end
 							end)
-							UIS.InputEnded:Connect(function(inputObject)
+							runtime:Connect(UIS.InputEnded, function(inputObject)
 								if inputObject.UserInputType == Enum.UserInputType.MouseButton1 then
 									Held = false
 								end
@@ -1418,7 +1662,7 @@ function library:AddWindow(title, options)
 						title.Text = "  " .. keybind_name
 						keybind.Size = UDim2.new(0, gNameLen(title) + 80, 0, 20)
 
-						local shortkeys = { -- thanks to stroketon for helping me out with this
+						local shortkeys = {
 							RightControl = 'RightCtrl',
 							LeftControl = 'LeftCtrl',
 							LeftShift = 'LShift',
@@ -1435,9 +1679,9 @@ function library:AddWindow(title, options)
 							keybind = Keybind
 						end
 
-						UIS.InputBegan:Connect(function(a, b)
+						runtime:Connect(UIS.InputBegan, function(a, b)
 							if checks.binding then
-								spawn(function()
+								runtime:Spawn(function()
 									wait()
 									checks.binding = false
 								end)
@@ -1450,7 +1694,7 @@ function library:AddWindow(title, options)
 
 						keybind_data:SetKeybind(keybind_options.standard)
 
-						input.MouseButton1Click:Connect(function()
+						runtime:Connect(input.MouseButton1Click, function()
 							if checks.binding then return end
 							input.Text = "..."
 							checks.binding = true
@@ -1463,6 +1707,7 @@ function library:AddWindow(title, options)
 
 					function tab_data:AddDropdown(dropdown_name, callback)
 						local dropdown_data = {}
+						local dropdown_objects = {}
 						dropdown_name = tostring(dropdown_name or "New Dropdown")
 						callback = typeof(callback) == "function" and callback or function()end
 
@@ -1481,7 +1726,7 @@ function library:AddWindow(title, options)
 						box.Size = UDim2.new(1, 0, 0, 0)
 
 						local open = false
-						dropdown.MouseButton1Click:Connect(function()
+						runtime:Connect(dropdown.MouseButton1Click, function()
 							open = not open
 
 							local len = (#objects:GetChildren() - 1) * 20
@@ -1490,12 +1735,12 @@ function library:AddWindow(title, options)
 								objects.CanvasSize = UDim2.new(0, 0, (#objects:GetChildren() - 1) * 0.1, 0)
 							end
 
-							if open then -- Open
+							if open then
 								if dropdown_open then return end
 								dropdown_open = true
 								Resize(box, {Size = UDim2.new(1, 0, 0, len)}, options.tween_time)
 								Resize(indicator, {Rotation = 90}, options.tween_time)
-							else -- Close
+							else
 								dropdown_open = false
 								Resize(box, {Size = UDim2.new(1, 0, 0, 0)}, options.tween_time)
 								Resize(indicator, {Rotation = -90}, options.tween_time)
@@ -1506,17 +1751,54 @@ function library:AddWindow(title, options)
 						function dropdown_data:Add(n)
 							local object_data = {}
 							n = tostring(n or "New Object")
+							if not objects or not objects.Parent then
+								return object_data
+							end
 
-local object = prefabs:FindFirstChild("DropdownButton"):Clone()
+							local named_objects = dropdown_objects[n]
+							local existing_object
+							if named_objects then
+								for index = #named_objects, 1, -1 do
+									local current_object = named_objects[index]
+									if not current_object or not current_object.Parent then
+										table.remove(named_objects, index)
+									elseif existing_object then
+										current_object:Destroy()
+										table.remove(named_objects, index)
+									else
+										existing_object = current_object
+									end
+								end
+
+								if #named_objects == 0 then
+									dropdown_objects[n] = nil
+								end
+							end
+
+							if existing_object then
+								function object_data:Remove()
+									dropdown_data:Remove(n)
+								end
+								return existing_object, object_data
+							end
+
+							local object_prefab = prefabs and prefabs:FindFirstChild("DropdownButton")
+							if not object_prefab then
+								return object_data
+							end
+
+							local object = object_prefab:Clone()
 
 							object.Parent = objects
 							object.Text = n
 							object.ZIndex = object.ZIndex + (windows * 10)
+							dropdown_objects[n] = dropdown_objects[n] or {}
+							table.insert(dropdown_objects[n], object)
 
-							object.MouseEnter:Connect(function()
+							runtime:Connect(object.MouseEnter, function()
 								object.BackgroundColor3 = options.main_color
 							end)
-							object.MouseLeave:Connect(function()
+							runtime:Connect(object.MouseLeave, function()
 								object.BackgroundColor3 = Color3.fromRGB(33, 34, 36)
 							end)
 
@@ -1529,7 +1811,7 @@ local object = prefabs:FindFirstChild("DropdownButton"):Clone()
 								Resize(box, {Size = UDim2.new(1, 0, 0, len)}, options.tween_time)
 							end
 
-							object.MouseButton1Click:Connect(function()
+							runtime:Connect(object.MouseButton1Click, function()
 								if dropdown_open then
 									dropdown.Text = "      [ " .. n .. " ]"
 									dropdown_open = false
@@ -1541,10 +1823,62 @@ local object = prefabs:FindFirstChild("DropdownButton"):Clone()
 							end)
 
 							function object_data:Remove()
-								object:Destroy()
+								if object.Parent then object:Destroy() end
+								local named_objects = dropdown_objects[n]
+								if named_objects then
+									for index = #named_objects, 1, -1 do
+										if named_objects[index] == object then
+											table.remove(named_objects, index)
+										end
+									end
+									if #named_objects == 0 then dropdown_objects[n] = nil end
+								end
 							end
 
 							return object, object_data
+						end
+
+						function dropdown_data:Remove(n)
+							n = tostring(n or "New Object")
+							local named_objects = dropdown_objects[n]
+							if not named_objects then return end
+
+							for _, object in ipairs(named_objects) do
+								if object.Parent then object:Destroy() end
+							end
+							dropdown_objects[n] = nil
+							if dropdown.Text == "      [ " .. n .. " ]" then
+								dropdown.Text = "      " .. dropdown_name
+							end
+							if open then
+								open = false
+								dropdown_open = false
+								Resize(box, {Size = UDim2.new(1, 0, 0, 0)}, options.tween_time)
+								Resize(indicator, {Rotation = -90}, options.tween_time)
+							end
+						end
+
+						function dropdown_data:Clear()
+							for name, named_objects in pairs(dropdown_objects) do
+								for _, object in ipairs(named_objects) do
+									if object.Parent then object:Destroy() end
+								end
+								dropdown_objects[name] = nil
+							end
+							dropdown.Text = "      " .. dropdown_name
+							if open then
+								open = false
+								dropdown_open = false
+								Resize(box, {Size = UDim2.new(1, 0, 0, 0)}, options.tween_time)
+								Resize(indicator, {Rotation = -90}, options.tween_time)
+							end
+						end
+
+						function dropdown_data:Refresh(items)
+							dropdown_data:Clear()
+							for _, item in ipairs(items or {}) do
+								dropdown_data:Add(item)
+							end
 						end
 
 						return dropdown_data, dropdown
@@ -1566,7 +1900,7 @@ local object = prefabs:FindFirstChild("DropdownButton"):Clone()
 						sample.ZIndex = sample.ZIndex + (windows * 10)
 						saturation.ZIndex = saturation.ZIndex + (windows * 10)
 
-						do -- Color Picker Math
+						do
 							local h = 0
 							local s = 1
 							local v = 1
@@ -1585,19 +1919,19 @@ local object = prefabs:FindFirstChild("DropdownButton"):Clone()
 							end
 
 							local Entered1, Entered2 = false, false
-							palette.MouseEnter:Connect(function()
+							runtime:Connect(palette.MouseEnter, function()
 								Window.Draggable = false
 								Entered1 = true
 							end)
-							palette.MouseLeave:Connect(function()
+							runtime:Connect(palette.MouseLeave, function()
 								Window.Draggable = true
 								Entered1 = false
 							end)
-							saturation.MouseEnter:Connect(function()
+							runtime:Connect(saturation.MouseEnter, function()
 								Window.Draggable = false
 								Entered2 = true
 							end)
-							saturation.MouseLeave:Connect(function()
+							runtime:Connect(saturation.MouseLeave, function()
 								Window.Draggable = true
 								Entered2 = false
 							end)
@@ -1608,12 +1942,12 @@ local object = prefabs:FindFirstChild("DropdownButton"):Clone()
 							saturation_indicator.ZIndex = saturation_indicator.ZIndex + (windows * 10)
 
 							local Held = false
-							UIS.InputBegan:Connect(function(inputObject)
+							runtime:Connect(UIS.InputBegan, function(inputObject)
 								if inputObject.UserInputType == Enum.UserInputType.MouseButton1 then
 									Held = true
 
-									spawn(function() -- Loop check
-										while Held and Entered1 and (not dropdown_open) do -- Palette
+									runtime:Spawn(function()
+										while Held and Entered1 and (not dropdown_open) do
 											local mouse_location = gMouse()
 
 											local x = ((palette.AbsoluteSize.X - (mouse_location.X - palette.AbsolutePosition.X)) + 1)
@@ -1629,7 +1963,7 @@ local object = prefabs:FindFirstChild("DropdownButton"):Clone()
 											RS.Heartbeat:Wait()
 										end
 
-										while Held and Entered2 and (not dropdown_open) do -- Saturation
+										while Held and Entered2 and (not dropdown_open) do
 											local mouse_location = gMouse()
 											local y = ((palette.AbsoluteSize.Y - (mouse_location.Y - palette.AbsolutePosition.Y)) + 1.5)
 											v = y / 100
@@ -1642,7 +1976,7 @@ local object = prefabs:FindFirstChild("DropdownButton"):Clone()
 									end)
 								end
 							end)
-							UIS.InputEnded:Connect(function(inputObject)
+							runtime:Connect(UIS.InputEnded, function(inputObject)
 								if inputObject.UserInputType == Enum.UserInputType.MouseButton1 then
 									Held = false
 								end
@@ -1943,12 +2277,12 @@ local object = prefabs:FindFirstChild("DropdownButton"):Clone()
 
 							if console_options.source == "Lua" then
 								highlight_lua("Text")
-								Source.Changed:Connect(highlight_lua)
+								runtime:Connect(Source.Changed, highlight_lua)
 							elseif console_options.source == "Logs" then
 								Lines.Visible = false
 
 								highlight_logs("Text")
-								Source.Changed:Connect(highlight_logs)
+								runtime:Connect(Source.Changed, highlight_logs)
 							end
 
 							function console_data:Set(code)
@@ -1992,7 +2326,7 @@ local object = prefabs:FindFirstChild("DropdownButton"):Clone()
 						return ha_data, ha
 					end
 
-					function tab_data:AddFolder(folder_name) -- [Folder]
+					function tab_data:AddFolder(folder_name)
 						local folder_data = {}
 
 						folder_name = tostring(folder_name or "New Folder")
@@ -2010,7 +2344,7 @@ local object = prefabs:FindFirstChild("DropdownButton"):Clone()
 						folder.Parent = new_tab
 						button.Text = "      " .. folder_name
 
-						spawn(function()
+						runtime:Spawn(function()
 							while true do
 								if button and button:GetChildren()[1] then
 									button:GetChildren()[1].ImageColor3 = options.main_color
@@ -2030,17 +2364,17 @@ local object = prefabs:FindFirstChild("DropdownButton"):Clone()
 						end
 
 						local open = false
-						button.MouseButton1Click:Connect(function()
-							if open then -- Close
+						runtime:Connect(button.MouseButton1Click, function()
+							if open then
 								objects.Visible = false
-							else -- Open
+							else
 								objects.Visible = true
 							end
 
 							open = not open
 						end)
 
-						spawn(function()
+						runtime:Spawn(function()
 							while true do
 								Resize(folder, {Size = UDim2.new(1, 0, 0, (open and gFolderLen() or 20))}, options.tween_time)
 								wait()
