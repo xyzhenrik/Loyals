@@ -81,7 +81,7 @@ local silence = library:AddWindow("LoYaLs | Farming - " .. greeting(), {
 runtime:Spawn(function()
     while true do
         task.wait(60)
-        silence:SetTitle("Silence | Fast Farming - " .. greeting())
+        silence:SetTitle("LoYaLs | Fast Farming - " .. greeting())
     end
 end)
 
@@ -95,7 +95,7 @@ local tabs = {
 
 tabs.other:Show()
 
-tabs.other.RedactConfigPath = "Silence/MuscleLegendsFarmingConfig.json"
+tabs.other.RedactConfigPath = "Loyals/MuscleLegendsFarmingConfig.json"
 tabs.other.RedactConfig = {
     RedactName = true,
     RedactStats = true,
@@ -117,8 +117,8 @@ tabs.other.saveRedactConfig = function()
     if type(writefile) ~= "function" then return end
     pcall(function()
         if type(makefolder) == "function"
-            and (type(isfolder) ~= "function" or not isfolder("Silence")) then
-            pcall(makefolder, "Silence")
+            and (type(isfolder) ~= "function" or not isfolder("Loyals")) then
+            pcall(makefolder, "Loyals")
         end
         writefile(tabs.other.RedactConfigPath, services.httpservice:JSONEncode(tabs.other.RedactConfig))
     end)
